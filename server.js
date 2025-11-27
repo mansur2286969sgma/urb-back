@@ -19,15 +19,15 @@ const pool = new Pool({
 
 // ✅ ПОДКЛЮЧЕНИЕ РОУТОВ ИЗ ПАПКИ routes
 const telegramRoutes = require('./routes/telegram');
-const authRoutes = require('./routes/auth');
+// const authRoutes = require('./routes/auth'); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
 const suggestionsRoutes = require('./routes/suggestions');
-const usersRoutes = require('./routes/users');
+// const usersRoutes = require('./routes/users'); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
 
 // ✅ ИСПОЛЬЗОВАНИЕ РОУТОВ
 app.use('/api/telegram', telegramRoutes);
-app.use('/api/auth', authRoutes);
+// app.use('/api/auth', authRoutes); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
 app.use('/api/suggestions', suggestionsRoutes);
-app.use('/api/users', usersRoutes);
+// app.use('/api/users', usersRoutes); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
 
 // ✅ ФУНКЦИЯ ДЛЯ ОТПРАВКИ В TELEGRAM (остается без изменений)
 const sendToTelegram = async (message) => {
