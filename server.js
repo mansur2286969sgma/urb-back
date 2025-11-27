@@ -11,14 +11,10 @@ const PORT = process.env.PORT || 3001
 app.use(cors())
 app.use(express.json())
 
-// Подключение к PostgreSQL
+// ✅ ОБНОВЛЕННОЕ ПОДКЛЮЧЕНИЕ К POSTGRESQL ДЛЯ RENDER
 const pool = new Pool({
-  user: 'postgres',
-  host: 'localhost',
-  database: 'forest_suggestions', 
-  password: 'nigga228',
-  port: 5432,
-  ssl: false
+  connectionString: process.env.DATABASE_URL || `postgresql://${process.env.PG_USER}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 })
 
 // ✅ ПОДКЛЮЧЕНИЕ РОУТОВ ИЗ ПАПКИ routes
@@ -33,7 +29,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/suggestions', suggestionsRoutes);
 app.use('/api/users', usersRoutes);
 
-// ✅ ФУНКЦИЯ ДЛЯ ОТПРАВКИ В TELEGRAM
+// ✅ ФУНКЦИЯ ДЛЯ ОТПРАВКИ В TELEGRAM (остается без изменений)
 const sendToTelegram = async (message) => {
   try {
     if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
@@ -56,6 +52,7 @@ const sendToTelegram = async (message) => {
     console.error('❌ Telegram error:', error.response?.data || error.message)
   }
 }
+
 
 // Создание таблицы для данных о лесах
 const initTable = async () => {
@@ -83,7 +80,16 @@ const initTable = async () => {
 
 // Инициализация
 initTable()
-
+// Эндпоинт для принудительной инициализации БД на Render
+app.post('/api/init-db', async (req, res) => {
+  try {
+    await initTable()
+    res.json({ success: true, message: 'Database tables initialized successfully' })
+  } catch (error) {
+    console.error('Error initializing database:', error)
+    res.status(500).json({ error: error.message })
+  }
+})
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Forest monitoring backend is running' })
