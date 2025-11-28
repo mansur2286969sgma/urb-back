@@ -2,8 +2,7 @@ require('dotenv').config();
 
 const express = require('express')
 const cors = require('cors')
-const { Pool } = require('pg')
-const axios = require('axios')
+const { pool } = require('./database')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -11,52 +10,33 @@ const PORT = process.env.PORT || 3001
 app.use(cors())
 app.use(express.json())
 
-// ✅ ОБНОВЛЕННОЕ ПОДКЛЮЧЕНИЕ К POSTGRESQL ДЛЯ RENDER
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || `postgresql://${process.env.PG_USER}:${process.env.PG_PASSWORD}@${process.env.PG_HOST}:${process.env.PG_PORT}/${process.env.PG_DATABASE}`,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-})
-
-// ✅ ПОДКЛЮЧЕНИЕ РОУТОВ ИЗ ПАПКИ routes
-const telegramRoutes = require('./routes/telegram');
-// const authRoutes = require('./routes/auth'); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
+// ✅ ПОДКЛЮЧЕНИЕ РОУТОВ
 const suggestionsRoutes = require('./routes/suggestions');
-// const usersRoutes = require('./routes/users'); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
+const authRoutes = require('./routes/auth');
 
-// ✅ ИСПОЛЬЗОВАНИЕ РОУТОВ
-app.use('/api/telegram', telegramRoutes);
-// app.use('/api/auth', authRoutes); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
 app.use('/api/suggestions', suggestionsRoutes);
-// app.use('/api/users', usersRoutes); // ВРЕМЕННО ВЫКЛЮЧИЛ ЕСЛИ НАДО ВКЛЮЧИШЬ!!!!!!!!
+app.use('/api/auth', authRoutes);
 
-// ✅ ФУНКЦИЯ ДЛЯ ОТПРАВКИ В TELEGRAM (остается без изменений)
-const sendToTelegram = async (message) => {
-  try {
-    if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
-      console.log('⚠️ Telegram credentials not set')
-      return
-    }
-
-    const response = await axios.post(
-      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`,
-      {
-        chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'HTML'
-      }
-    )
-    
-    console.log('✅ Message sent to Telegram')
-    return response.data
-  } catch (error) {
-    console.error('❌ Telegram error:', error.response?.data || error.message)
-  }
-}
-
-
-// Создание таблицы для данных о лесах
+// ✅ СОЗДАНИЕ ВСЕХ ТАБЛИЦ
 const initTable = async () => {
   try {
+    // Таблица для предложений
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS suggestions (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        message TEXT NOT NULL,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        likes INTEGER DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'new',
+        is_pinned BOOLEAN DEFAULT false,
+        priority VARCHAR(20),
+        category VARCHAR(50)
+      )
+    `)
+    console.log('✅ Table "suggestions" created/verified')
+    
+    // Таблица для отчетов о лесах
     await pool.query(`
       CREATE TABLE IF NOT EXISTS forest_reports (
         id SERIAL PRIMARY KEY,
@@ -66,36 +46,55 @@ const initTable = async () => {
         description TEXT NOT NULL,
         reporter_name VARCHAR(100),
         urgency_level VARCHAR(20) DEFAULT 'medium',
-        coordinates VARCHAR(100),
-        photo_url TEXT,
-        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        status VARCHAR(20) DEFAULT 'new'
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `)
     console.log('✅ Table "forest_reports" created/verified')
+
+    // Таблица пользователей
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    console.log('✅ Table "users" created/verified')
+
+    // Таблица сессий
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        token VARCHAR(255) UNIQUE NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    console.log('✅ Table "user_sessions" created/verified')
+
+    // Обновляем таблицу комментариев
+    await pool.query(`
+      ALTER TABLE suggestion_comments 
+      ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+    `)
+    console.log('✅ Table "suggestion_comments" updated')
+
   } catch (error) {
-    console.error('❌ Error creating table:', error)
+    console.error('❌ Error creating tables:', error)
   }
 }
 
 // Инициализация
 initTable()
-// Эндпоинт для принудительной инициализации БД на Render
-app.post('/api/init-db', async (req, res) => {
-  try {
-    await initTable()
-    res.json({ success: true, message: 'Database tables initialized successfully' })
-  } catch (error) {
-    console.error('Error initializing database:', error)
-    res.status(500).json({ error: error.message })
-  }
-})
-// Health check
+
+// ✅ HEALTH CHECK
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Forest monitoring backend is running' })
 })
 
-// Получить все отчёты о лесах
+// ✅ ПОЛУЧИТЬ ВСЕ ОТЧЁТЫ О ЛЕСАХ
 app.get('/api/forest-reports', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM forest_reports ORDER BY date DESC')
@@ -106,7 +105,7 @@ app.get('/api/forest-reports', async (req, res) => {
   }
 })
 
-// ✅ ОТПРАВИТЬ ОТЧЁТ О ЛЕСЕ + TELEGRAM
+// ✅ ОТПРАВИТЬ ОТЧЁТ О ЛЕСЕ
 app.post('/api/forest-reports', async (req, res) => {
   try {
     const { 
@@ -115,8 +114,7 @@ app.post('/api/forest-reports', async (req, res) => {
       report_type, 
       description, 
       reporter_name,
-      urgency_level,
-      coordinates 
+      urgency_level
     } = req.body
     
     if (!forest_name || !location || !report_type || !description) {
@@ -125,40 +123,13 @@ app.post('/api/forest-reports', async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO forest_reports 
-      (forest_name, location, report_type, description, reporter_name, urgency_level, coordinates) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [forest_name, location, report_type, description, reporter_name, urgency_level, coordinates]
+      (forest_name, location, report_type, description, reporter_name, urgency_level) 
+      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [forest_name, location, report_type, description, reporter_name, urgency_level]
     )
     
     const newReport = result.rows[0]
     console.log('✅ New forest report added:', newReport.id)
-
-    // ✅ ОТПРАВКА В TELEGRAM
-    const urgencyEmoji = {
-      'low': '🟢',
-      'medium': '🟡', 
-      'high': '🟠',
-      'critical': '🔴'
-    }[urgency_level] || '⚪'
-
-    const telegramMessage = `
-${urgencyEmoji} НОВЫЙ ОТЧЁТ О ЛЕСЕ ПЕТРОПАВЛОВСКА:
-
-🌲 Лес: ${forest_name}
-📍 Район: ${location}
-📋 Тип отчёта: ${report_type}
-
-📝 Описание:
-${description}
-
-👤 Сообщил: ${reporter_name || 'Аноним'}
-🚨 Срочность: ${urgency_level}
-🕒 Время: ${new Date().toLocaleString('ru-RU')}
-
-#лес_петропавловск #экология
-    `.trim()
-
-    await sendToTelegram(telegramMessage)
     
     res.json(newReport)
   } catch (error) {
@@ -172,23 +143,14 @@ app.post('/api/forest-alert', async (req, res) => {
   try {
     const { forest_name, location, emergency_type, details, reporter_name } = req.body
     
-    const telegramMessage = `
-🚨🚨🚨 ЭКСТРЕННОЕ УВЕДОМЛЕНИЕ 🚨🚨🚨
-
-🌲 Лесной массив: ${forest_name}
-📍 Местоположение: ${location}
-⚠️ Тип ЧС: ${emergency_type}
-
-📋 Детали:
-${details}
-
-👤 Сообщил: ${reporter_name || 'Аноним'}
-🕒 Время: ${new Date().toLocaleString('ru-RU')}
-
-‼️ ТРЕБУЕТСЯ НЕМЕДЛЕННОЕ РЕАГИРОВАНИЕ ‼️
-    `.trim()
-
-    await sendToTelegram(telegramMessage)
+    const result = await pool.query(
+      `INSERT INTO forest_reports 
+      (forest_name, location, report_type, description, reporter_name, urgency_level) 
+      VALUES ($1, $2, $3, $4, $5, 'critical') RETURNING *`,
+      [forest_name, location, emergency_type, details, reporter_name]
+    )
+    
+    console.log('✅ Emergency alert added:', result.rows[0].id)
     
     res.json({ success: true, message: 'Экстренное уведомление отправлено' })
   } catch (error) {
@@ -200,8 +162,9 @@ ${details}
 app.listen(PORT, () => {
   console.log(`🚀 Forest monitoring backend running on port ${PORT}`)
   console.log(`📡 Routes available:`)
-  console.log(`   - /api/telegram/*`)
-  console.log(`   - /api/auth/*`)
   console.log(`   - /api/suggestions/*`)
-  console.log(`   - /api/users/*`)
+  console.log(`   - /api/auth/*`)
+  console.log(`   - /api/forest-reports`)
+  console.log(`   - /api/forest-alert`)
+  console.log(`   - /api/health`)
 })
