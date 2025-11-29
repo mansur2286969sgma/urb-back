@@ -1,0 +1,100 @@
+// composables/useAdminState.ts
+export const useAdminState = () => {
+  const isAdmin = ref(false)
+  const adminUser = ref<any>(null)
+  const isLoading = ref(false)
+
+  const API_BASE = 'http://localhost:3001/api'
+
+  // Вход администратора
+  const adminLogin = async (credentials: { login: string; password: string }) => {
+    try {
+      isLoading.value = true
+      
+      const response = await $fetch(`${API_BASE}/admin/login`, {
+        method: 'POST',
+        body: credentials
+      })
+
+      if (response.success) {
+        isAdmin.value = true
+        adminUser.value = response.user
+        
+        // Сохраняем токен в localStorage
+        if (process.client) {
+          localStorage.setItem('adminToken', response.token)
+          localStorage.setItem('adminUser', JSON.stringify(response.user))
+        }
+        
+        return { success: true }
+      } else {
+        return { success: false, error: response.error }
+      }
+    } catch (error: any) {
+      console.error('Ошибка входа:', error)
+      return { 
+        success: false, 
+        error: error.data?.error || 'Ошибка соединения с сервером' 
+      }
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  // Проверка авторизации администратора
+  const checkAdminAuth = async () => {
+    try {
+      if (process.client) {
+        const token = localStorage.getItem('adminToken')
+        
+        if (!token) {
+          isAdmin.value = false
+          adminUser.value = null
+          return
+        }
+
+        const response = await $fetch(`${API_BASE}/admin/verify`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+
+        if (response.success) {
+          isAdmin.value = true
+          adminUser.value = response.user
+        } else {
+          // Токен невалидный, очищаем
+          logout()
+        }
+      }
+    } catch (error) {
+      console.error('Ошибка проверки авторизации:', error)
+      logout()
+    }
+  }
+
+  // Выход администратора
+  const logout = () => {
+    isAdmin.value = false
+    adminUser.value = null
+    
+    if (process.client) {
+      localStorage.removeItem('adminToken')
+      localStorage.removeItem('adminUser')
+    }
+  }
+
+  // Проверяем авторизацию при инициализации
+  onMounted(() => {
+    checkAdminAuth()
+  })
+
+  return {
+    isAdmin: readonly(isAdmin),
+    adminUser: readonly(adminUser),
+    isLoading: readonly(isLoading),
+    adminLogin,
+    logout,
+    checkAdminAuth
+  }
+}
